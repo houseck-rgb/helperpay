@@ -149,7 +149,9 @@ input:focus,textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 
   <div id="stores"></div>
-  <div class="note">매장 옆 <b>+ 올리기</b>로 캡쳐 추가 · 사진을 누르면 크게 보고 메모 입력·복사</div>
+  <div class="note">매장 옆 <b>+ 올리기</b>로 캡쳐 추가 · 사진을 누르면 크게 보고 메모 입력·복사<br>
+  📥 <b>갤럭시 빠른 방법</b>: 갤러리 앱에서 캡쳐 선택 → <b>공유</b> → <b>입금 처리</b> → 매장 선택 (홈 화면에 설치한 앱에서만)<br>
+  📷 <b>+ 올리기</b>에서 파일 화면이 뜨면 왼쪽 위 ☰ → <b>갤러리</b> 또는 <b>사진</b>을 고르면 사진첩 순서로 보여요</div>
 </div>
 <input type="file" id="file" accept="image/*" multiple class="hidden">
 
@@ -279,7 +281,8 @@ $('#filter').addEventListener('click',e=>{const b=e.target.closest('[data-f]');i
 
 /* ---------- 목록 ---------- */
 const dayItems=()=>items.filter(i=>i.day===day).sort((a,b)=>a.createdAt-b.createdAt);
-const sortWaitFirst=a=>a.slice().sort((x,y)=>(x.status===y.status?x.createdAt-y.createdAt:(x.status==='wait'?-1:1)));
+const tOf=i=>i.takenAt||i.createdAt;
+const sortWaitFirst=a=>a.slice().sort((x,y)=>(x.status===y.status?tOf(x)-tOf(y):(x.status==='wait'?-1:1)));
 const carryItems=()=>filter==='done'?[]:items.filter(i=>i.day<day&&i.status==='wait').sort((a,b)=>a.day<b.day?-1:a.day>b.day?1:STORES.indexOf(a.store)-STORES.indexOf(b.store)||a.createdAt-b.createdAt);
 const mdOf=k=>{const [,m,d]=k.split('-').map(Number);return `${m}/${d}`};
 function visibleList(){return carryItems().concat(STORES.flatMap(s=>sortWaitFirst(dayItems().filter(i=>i.store===s&&(filter==='all'||i.status===filter)))))}
@@ -311,7 +314,7 @@ function tile(it,carry){
     ${it.img?`<img src="${imgURL(it)}" alt="" loading="lazy">`:`<div class="noimg">사진<br>삭제됨</div>`}
     <span class="st">${it.status==='done'?'✅ 완료':'대기'}</span>${isRateOk(it)?'':'<span class="wn">⚠ 단가확인</span>'}
     ${carry?`<span class="dt">${mdOf(it.day)}</span>`:(it.memo?'<span class="memo">📝</span>':'')}
-    <div class="cap"><b>${it.amount?won(it.amount)+'원':'금액 미입력'}</b><span>${carry?it.store+' · ':''}${esc(it.name)||hm(it.createdAt)}</span></div>
+    <div class="cap"><b>${it.amount?won(it.amount)+'원':'금액 미입력'}</b><span>${carry?it.store+' · ':''}${esc(it.name)||hm(it.takenAt||it.createdAt)}</span></div>
   </button>`;
 }
 
@@ -325,8 +328,8 @@ function shrink(file){return new Promise(res=>{const u=URL.createObjectURL(file)
     c.toBlob(b=>{URL.revokeObjectURL(u);res(b||file)},'image/jpeg',.88)};
   im.onerror=()=>{URL.revokeObjectURL(u);res(file)};im.src=u})}
 async function addFiles(files,store){
-  files=[...files].filter(f=>f&&f.type&&f.type.startsWith('image/'));if(!files.length||!store)return;
-  for(const f of files){const img=await shrink(f);const it={id:uid(),store,day,createdAt:Date.now(),amount:'',name:'',memo:'',status:'wait',img};await put(it);items.push(it)}
+  files=[...files].filter(f=>f&&f.type&&f.type.startsWith('image/')).sort((a,b)=>(a.lastModified||0)-(b.lastModified||0));if(!files.length||!store)return;
+  for(const f of files){const img=await shrink(f);const it={id:uid(),store,day,createdAt:Date.now(),takenAt:f.lastModified||null,amount:'',name:'',memo:'',status:'wait',img};await put(it);items.push(it)}
   render();toast(`${store} ${files.length}장 올렸어요`);
 }
 $('#file').onchange=e=>{addFiles(e.target.files,upStore);e.target.value=''};
@@ -496,8 +499,23 @@ $('#ocrCopyAll').onclick=async()=>{const t=$('#ocrTxt').value;if(!t){toast('복�
   for(const x of items.filter(i=>i.day<limit)){await del(x.id)}
   items=items.filter(i=>i.day>=limit);
   render();
+  checkInbox();
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 })();
+/* ---------- 갤러리에서 공유받은 캡쳐 ---------- */
+async function checkInbox(){
+  try{
+    if(/shared=1/.test(location.search))history.replaceState(null,'',location.pathname);
+    if(!('caches' in window))return;
+    const c=await caches.open('share-inbox');const keys=await c.keys();if(!keys.length)return;
+    const files=[];
+    for(const k of keys){const r=await c.match(k);if(!r)continue;const b=await r.blob();files.push(new File([b],'shared.jpg',{type:b.type||'image/jpeg',lastModified:Number(r.headers.get('x-lm'))||Date.now()}))}
+    if(!files.length){await caches.delete('share-inbox');return}
+    pick(`📥 공유받은 캡쳐 ${files.length}장`,'어느 매장 헬퍼 입금인가요? (오늘 날짜로 들어가요)',STORES.map(st=>[st,'b-soft',async()=>{
+      day=dayKey(Date.now());await addFiles(files,st);await caches.delete('share-inbox');
+    }]));
+  }catch(e){}
+}
 window.addEventListener('popstate',()=>{if($('#det').classList.contains('show'))closeDet()});
 
 /* ---------- PWA ---------- */
